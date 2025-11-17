@@ -15,14 +15,14 @@ export interface TokenPair {
 export class JWTService {
   generateAccessToken(payload: TokenPayload): string {
     return jwt.sign(payload, env.JWT_SECRET, {
-      expiresIn: env.JWT_EXPIRES_IN,
-    });
+      expiresIn: env.JWT_EXPIRES_IN as string | number,
+    } as jwt.SignOptions);
   }
 
   generateRefreshToken(payload: TokenPayload): string {
     return jwt.sign(payload, env.JWT_REFRESH_SECRET, {
-      expiresIn: env.JWT_REFRESH_EXPIRES_IN,
-    });
+      expiresIn: env.JWT_REFRESH_EXPIRES_IN as string | number,
+    } as jwt.SignOptions);
   }
 
   generateTokenPair(payload: TokenPayload): TokenPair {

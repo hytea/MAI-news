@@ -60,3 +60,6 @@ export function optionalAuth(
     // Silently fail for optional auth
   }
 }
+
+// Alias for convenience
+export const authMiddleware = authenticateUser;
