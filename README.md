@@ -1,0 +1,2 @@
+# MAI-news
+Curated news
