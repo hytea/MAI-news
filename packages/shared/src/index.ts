@@ -13,6 +13,9 @@ export * from './types/preferences';
 // AI types
 export * from './types/ai';
 
+// Reading history types
+export * from './types/reading-history';
+
 // Utility functions
 export * from './utils/validation';
 export * from './utils/errors';
