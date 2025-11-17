@@ -1,7 +1,12 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { ArticleService } from '../services/article.service';
+import { ArticleRewritingService } from '../services/article-rewriting.service';
+import { ArticleCacheService } from '../services/article-cache.service';
 import { authenticateUser, optionalAuth } from '../middleware/auth.middleware';
-import { ArticleCategory, ValidationError } from '@news-curator/shared';
+import { ArticleCategory, ValidationError, AIProviderError } from '@news-curator/shared';
+import { AIProviderFactory } from '@news-curator/ai-providers';
+import { redis } from '../config/redis';
+import { env } from '../config/env';
 import { z } from 'zod';
 
 // Request schemas
@@ -23,10 +28,34 @@ const ArticleIdParamsSchema = z.object({
 
 const RewriteArticleBodySchema = z.object({
   styleProfileId: z.string().uuid(),
+  skipCache: z.boolean().optional(),
+  includeKeyPoints: z.boolean().optional(),
+  includeSummary: z.boolean().optional(),
+});
+
+const GetRewrittenArticleParamsSchema = z.object({
+  id: z.string().uuid(),
+  styleProfileId: z.string().uuid(),
+});
+
+const ListRewrittenArticlesQuerySchema = z.object({
+  limit: z.coerce.number().min(1).max(100).default(50),
+  offset: z.coerce.number().min(0).default(0),
 });
 
 export async function articlesRoutes(app: FastifyInstance): Promise<void> {
   const articleService = new ArticleService(app.db);
+
+  // Initialize comprehensive rewriting service
+  const cacheService = new ArticleCacheService(redis);
+  const aiProvider = AIProviderFactory.create({
+    provider: env.AI_PROVIDER,
+    apiKey: env.AI_API_KEY,
+    model: env.AI_MODEL || 'anthropic/claude-3-haiku',
+    temperature: 0.7,
+    maxTokens: 4000,
+  });
+  const rewritingService = new ArticleRewritingService(app.db, aiProvider, cacheService);
 
   /**
    * GET /articles
@@ -129,10 +158,16 @@ export async function articlesRoutes(app: FastifyInstance): Promise<void> {
           throw new ValidationError('User not authenticated');
         }
 
-        const rewrittenArticle = await articleService.rewriteArticle(
+        const rewrittenArticle = await rewritingService.rewriteArticle(
           params.id,
           request.user.userId,
-          body.styleProfileId
+          body.styleProfileId,
+          {
+            skipCache: body.skipCache,
+            includeKeyPoints: body.includeKeyPoints,
+            includeSummary: body.includeSummary,
+            addSourceCitation: true,
+          }
         );
 
         return {
@@ -143,8 +178,185 @@ export async function articlesRoutes(app: FastifyInstance): Promise<void> {
         if (error instanceof z.ZodError) {
           throw new ValidationError('Invalid request', { errors: error.errors });
         }
+        if (error instanceof AIProviderError) {
+          throw error; // Will be handled by global error handler
+        }
         throw error;
       }
+    }
+  );
+
+  /**
+   * GET /articles/:id/rewritten/:styleProfileId
+   * Get a rewritten article by article ID and style profile ID
+   * Requires authentication
+   */
+  app.get(
+    '/:id/rewritten/:styleProfileId',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Params: z.infer<typeof GetRewrittenArticleParamsSchema>;
+      }>
+    ) => {
+      try {
+        const params = GetRewrittenArticleParamsSchema.parse(request.params);
+
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
+
+        const rewrittenArticle = await rewritingService.getRewrittenArticle(
+          params.id,
+          request.user.userId,
+          params.styleProfileId
+        );
+
+        if (!rewrittenArticle) {
+          return {
+            success: false,
+            error: {
+              code: 'NOT_FOUND',
+              message: 'Rewritten article not found',
+            },
+          };
+        }
+
+        return {
+          success: true,
+          data: rewrittenArticle,
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid parameters', { errors: error.errors });
+        }
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * GET /articles/rewritten/my-articles
+   * Get all rewritten articles for the authenticated user
+   * Requires authentication
+   */
+  app.get(
+    '/rewritten/my-articles',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Querystring: z.infer<typeof ListRewrittenArticlesQuerySchema>;
+      }>
+    ) => {
+      try {
+        const query = ListRewrittenArticlesQuerySchema.parse(request.query);
+
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
+
+        const rewrittenArticles = await rewritingService.getUserRewrittenArticles(
+          request.user.userId,
+          query.limit,
+          query.offset
+        );
+
+        return {
+          success: true,
+          data: {
+            rewrittenArticles,
+            pagination: {
+              limit: query.limit,
+              offset: query.offset,
+              count: rewrittenArticles.length,
+            },
+          },
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid query parameters', { errors: error.errors });
+        }
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * DELETE /articles/rewritten/:id
+   * Delete a rewritten article
+   * Requires authentication
+   */
+  app.delete(
+    '/rewritten/:id',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request: FastifyRequest<{ Params: { id: string } }>) => {
+      try {
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
+
+        await rewritingService.deleteRewrittenArticle(
+          request.params.id,
+          request.user.userId
+        );
+
+        return {
+          success: true,
+          message: 'Rewritten article deleted successfully',
+        };
+      } catch (error) {
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * GET /articles/cache/stats
+   * Get cache statistics
+   * Requires authentication
+   */
+  app.get(
+    '/cache/stats',
+    {
+      preHandler: authenticateUser,
+    },
+    async () => {
+      const stats = await cacheService.getCacheStats();
+
+      return {
+        success: true,
+        data: stats,
+      };
+    }
+  );
+
+  /**
+   * DELETE /articles/cache/my-cache
+   * Clear the authenticated user's cache
+   * Requires authentication
+   */
+  app.delete(
+    '/cache/my-cache',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request: FastifyRequest) => {
+      if (!request.user) {
+        throw new ValidationError('User not authenticated');
+      }
+
+      await cacheService.invalidateUserCache(request.user.userId);
+
+      return {
+        success: true,
+        message: 'Cache cleared successfully',
+      };
     }
   );
 }
