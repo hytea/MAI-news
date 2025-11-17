@@ -1,17 +1,15 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Article } from '../types';
-import { formatTimeAgo, formatReadingTime, truncateText } from '../utils/formatting';
+import { formatTimeAgo, formatReadingTime, truncateText, calculateReadingTime, formatCategoryLabel } from '../utils/formatting';
 
 interface ArticleCardProps {
   article: Article;
 }
 
 export const ArticleCard: React.FC<ArticleCardProps> = ({ article }) => {
-  const excerpt = truncateText(
-    article.rewrittenContent || article.originalContent,
-    200
-  );
+  const excerpt = truncateText(article.originalContent, 200);
+  const readingTime = calculateReadingTime(article.originalContent);
 
   return (
     <Link to={`/article/${article.id}`}>
@@ -30,21 +28,26 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article }) => {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">
               <span className="inline-block px-2 py-1 text-xs font-semibold text-primary-700 bg-primary-100 rounded">
-                {article.category}
+                {formatCategoryLabel(article.category)}
               </span>
-              <span className="text-xs text-gray-500">{article.source}</span>
+              {article.source && (
+                <>
+                  <span className="text-xs text-gray-500">{article.source.name}</span>
+                  {article.source.reliabilityScore && (
+                    <span className="text-xs text-green-600">
+                      ✓ {article.source.reliabilityScore}% reliable
+                    </span>
+                  )}
+                </>
+              )}
               <span className="text-xs text-gray-400">•</span>
               <span className="text-xs text-gray-500">
                 {formatTimeAgo(article.publishedAt)}
               </span>
-              {article.readingTime && (
-                <>
-                  <span className="text-xs text-gray-400">•</span>
-                  <span className="text-xs text-gray-500">
-                    {formatReadingTime(article.readingTime)}
-                  </span>
-                </>
-              )}
+              <span className="text-xs text-gray-400">•</span>
+              <span className="text-xs text-gray-500">
+                {formatReadingTime(readingTime)}
+              </span>
             </div>
 
             <h3 className="text-xl font-bold text-gray-900 mb-2 line-clamp-2">

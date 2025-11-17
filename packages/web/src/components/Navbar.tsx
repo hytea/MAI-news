@@ -61,10 +61,14 @@ export const Navbar: React.FC = () => {
               >
                 <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
                   <span className="text-primary-700 font-semibold text-sm">
-                    {user?.name?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase()}
+                    {user?.firstName?.charAt(0).toUpperCase() || user?.email?.charAt(0).toUpperCase()}
                   </span>
                 </div>
-                <span className="font-medium">{user?.name || user?.email}</span>
+                <span className="font-medium">
+                  {user?.firstName && user?.lastName
+                    ? `${user.firstName} ${user.lastName}`
+                    : user?.firstName || user?.email}
+                </span>
                 <svg
                   className={`w-4 h-4 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`}
                   fill="none"
