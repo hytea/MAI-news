@@ -1,12 +1,22 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import { Pool } from 'pg';
 import { env } from './config/env';
+import { getDatabasePool } from './config/database';
 import { authRoutes } from './routes/auth.routes';
 import { articlesRoutes } from './routes/articles.routes';
 import { styleProfilesRoutes } from './routes/style-profiles.routes';
 import { userRoutes } from './routes/user.routes';
+import { sourcesRoutes } from './routes/sources.routes';
 import { AppError } from '@news-curator/shared';
+
+// Extend Fastify instance with database pool
+declare module 'fastify' {
+  interface FastifyInstance {
+    db: Pool;
+  }
+}
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -24,6 +34,9 @@ export async function buildApp(): Promise<FastifyInstance> {
           : undefined,
     },
   });
+
+  // Add database pool to app instance
+  app.decorate('db', getDatabasePool());
 
   // Register plugins
   await app.register(cors, {
@@ -69,6 +82,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(articlesRoutes, { prefix: '/api/articles' });
   await app.register(styleProfilesRoutes, { prefix: '/api/style-profiles' });
   await app.register(userRoutes, { prefix: '/api/user' });
+  await app.register(sourcesRoutes, { prefix: '/api' });
 
   return app;
 }

@@ -94,14 +94,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Change password
-  app.post('/change-password', {
+  app.post<{
+    Body: { currentPassword: string; newPassword: string };
+  }>('/change-password', {
     preHandler: authenticateUser,
-  }, async (
-    request: FastifyRequest<{
-      Body: { currentPassword: string; newPassword: string };
-    }>,
-    reply: FastifyReply
-  ) => {
+  }, async (request, reply) => {
     if (!request.user) {
       throw new Error('User not authenticated');
     }
