@@ -2,27 +2,30 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ArticleCard } from '../components/ArticleCard';
 import { CategoryFilter } from '../components/CategoryFilter';
 import { apiClient } from '../services/api';
-import { Article } from '../types';
+import { Article, ArticleCategory } from '../types';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 
 export const NewsFeed: React.FC = () => {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('');
-  const [page, setPage] = useState(1);
+  const [selectedCategory, setSelectedCategory] = useState<ArticleCategory | ''>('');
+  const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const limit = 20;
 
   const fetchArticles = useCallback(
-    async (pageNum: number, isNewSearch = false) => {
+    async (currentOffset: number, isNewSearch = false) => {
       try {
         setLoading(true);
         const response = await apiClient.getArticles({
-          page: pageNum,
-          limit: 20,
+          limit,
+          offset: currentOffset,
           category: selectedCategory || undefined,
           search: searchQuery || undefined,
+          sortBy: 'published_at',
+          sortOrder: 'desc',
         });
 
         if (isNewSearch) {
@@ -43,17 +46,17 @@ export const NewsFeed: React.FC = () => {
   );
 
   useEffect(() => {
-    setPage(1);
-    fetchArticles(1, true);
-  }, [selectedCategory, searchQuery]);
+    setOffset(0);
+    fetchArticles(0, true);
+  }, [selectedCategory, searchQuery, fetchArticles]);
 
   const loadMore = useCallback(() => {
     if (!loading && hasMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      fetchArticles(nextPage);
+      const nextOffset = offset + limit;
+      setOffset(nextOffset);
+      fetchArticles(nextOffset);
     }
-  }, [loading, hasMore, page, fetchArticles]);
+  }, [loading, hasMore, offset, fetchArticles]);
 
   const { observerRef, resetFetching } = useInfiniteScroll(loadMore);
 
@@ -65,7 +68,7 @@ export const NewsFeed: React.FC = () => {
 
   const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setPage(1);
+    setOffset(0);
   };
 
   return (
