@@ -1,21 +1,53 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { Pool } from 'pg';
-import { getDatabasePool } from '../config/database';
-import { redis } from '../config/redis';
-import { authenticateUser } from '../middleware/auth.middleware';
+import { FastifyInstance, FastifyRequest } from 'fastify';
+import { ArticleService } from '../services/article.service';
 import { ArticleRewritingService } from '../services/article-rewriting.service';
 import { ArticleCacheService } from '../services/article-cache.service';
+import { authenticateUser, optionalAuth } from '../middleware/auth.middleware';
+import { ArticleCategory, ValidationError, AIProviderError } from '@news-curator/shared';
 import { AIProviderFactory } from '@news-curator/ai-providers';
+import { redis } from '../config/redis';
 import { env } from '../config/env';
-import { ValidationError, AIProviderError } from '@news-curator/shared';
+import { z } from 'zod';
 
-let rewritingService: ArticleRewritingService;
+// Request schemas
+const ListArticlesQuerySchema = z.object({
+  category: z.nativeEnum(ArticleCategory).optional(),
+  sourceId: z.string().uuid().optional(),
+  search: z.string().optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  limit: z.coerce.number().min(1).max(100).default(10),
+  offset: z.coerce.number().min(0).default(0),
+  sortBy: z.enum(['published_at', 'importance_score', 'created_at']).default('published_at'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
+const ArticleIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+const RewriteArticleBodySchema = z.object({
+  styleProfileId: z.string().uuid(),
+  skipCache: z.boolean().optional(),
+  includeKeyPoints: z.boolean().optional(),
+  includeSummary: z.boolean().optional(),
+});
+
+const GetRewrittenArticleParamsSchema = z.object({
+  id: z.string().uuid(),
+  styleProfileId: z.string().uuid(),
+});
+
+const ListRewrittenArticlesQuerySchema = z.object({
+  limit: z.coerce.number().min(1).max(100).default(50),
+  offset: z.coerce.number().min(0).default(0),
+});
 
 export async function articlesRoutes(app: FastifyInstance): Promise<void> {
-  const db: Pool = getDatabasePool();
-  const cacheService = new ArticleCacheService(redis);
+  const articleService = new ArticleService(app.db);
 
-  // Initialize AI provider and rewriting service
+  // Initialize comprehensive rewriting service
+  const cacheService = new ArticleCacheService(redis);
   const aiProvider = AIProviderFactory.create({
     provider: env.AI_PROVIDER,
     apiKey: env.AI_API_KEY,
@@ -23,265 +55,308 @@ export async function articlesRoutes(app: FastifyInstance): Promise<void> {
     temperature: 0.7,
     maxTokens: 4000,
   });
+  const rewritingService = new ArticleRewritingService(app.db, aiProvider, cacheService);
 
-  rewritingService = new ArticleRewritingService(db, aiProvider, cacheService);
+  /**
+   * GET /articles
+   * List articles with optional filters and pagination
+   * Optional auth - if authenticated, user preferences will be applied
+   */
+  app.get(
+    '/',
+    {
+      preHandler: optionalAuth,
+    },
+    async (request: FastifyRequest<{ Querystring: z.infer<typeof ListArticlesQuerySchema> }>) => {
+      try {
+        const query = ListArticlesQuerySchema.parse(request.query);
 
-  // Get all articles (paginated)
-  app.get('/', async (request: FastifyRequest<{
-    Querystring: {
-      limit?: string;
-      offset?: string;
-      category?: string;
-    };
-  }>, reply: FastifyReply) => {
-    const limit = parseInt(request.query.limit || '50', 10);
-    const offset = parseInt(request.query.offset || '0', 10);
-    const category = request.query.category;
+        const filters = {
+          category: query.category,
+          sourceId: query.sourceId,
+          search: query.search,
+          startDate: query.startDate ? new Date(query.startDate) : undefined,
+          endDate: query.endDate ? new Date(query.endDate) : undefined,
+        };
 
-    let query = `
-      SELECT
-        a.*,
-        s.id as source_id,
-        s.name as source_name,
-        s.url as source_url,
-        s.reliability_score,
-        s.favicon
-      FROM articles a
-      JOIN sources s ON a.source_id = s.id
-    `;
+        const pagination = {
+          limit: query.limit,
+          offset: query.offset,
+          sortBy: query.sortBy,
+          sortOrder: query.sortOrder,
+        };
 
-    const params: any[] = [];
+        const userId = request.user?.userId;
+        const result = await articleService.listArticles(filters, pagination, userId);
 
-    if (category) {
-      query += ` WHERE a.category = $1`;
-      params.push(category);
-      query += ` ORDER BY a.published_at DESC LIMIT $2 OFFSET $3`;
-      params.push(limit, offset);
-    } else {
-      query += ` ORDER BY a.published_at DESC LIMIT $1 OFFSET $2`;
-      params.push(limit, offset);
-    }
-
-    const result = await db.query(query, params);
-
-    const articles = result.rows.map(row => ({
-      id: row.id,
-      sourceId: row.source_id,
-      title: row.title,
-      originalContent: row.original_content,
-      url: row.url,
-      author: row.author,
-      publishedAt: row.published_at,
-      category: row.category,
-      imageUrl: row.image_url,
-      importanceScore: row.importance_score,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      source: {
-        id: row.source_id,
-        name: row.source_name,
-        url: row.source_url,
-        reliabilityScore: row.reliability_score,
-        favicon: row.favicon,
-      },
-    }));
-
-    reply.send({ articles, count: articles.length, limit, offset });
-  });
-
-  // Get article by ID
-  app.get('/:id', async (request: FastifyRequest<{
-    Params: { id: string };
-  }>, reply: FastifyReply) => {
-    const { id } = request.params;
-
-    const query = `
-      SELECT
-        a.*,
-        s.id as source_id,
-        s.name as source_name,
-        s.url as source_url,
-        s.reliability_score,
-        s.favicon,
-        s.is_active
-      FROM articles a
-      JOIN sources s ON a.source_id = s.id
-      WHERE a.id = $1
-    `;
-
-    const result = await db.query(query, [id]);
-
-    if (result.rows.length === 0) {
-      reply.status(404).send({ error: 'Article not found' });
-      return;
-    }
-
-    const row = result.rows[0];
-
-    const article = {
-      id: row.id,
-      sourceId: row.source_id,
-      title: row.title,
-      originalContent: row.original_content,
-      url: row.url,
-      author: row.author,
-      publishedAt: row.published_at,
-      category: row.category,
-      imageUrl: row.image_url,
-      importanceScore: row.importance_score,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      source: {
-        id: row.source_id,
-        name: row.source_name,
-        url: row.source_url,
-        reliabilityScore: row.reliability_score,
-        favicon: row.favicon,
-        isActive: row.is_active,
-      },
-    };
-
-    reply.send({ article });
-  });
-
-  // Rewrite article with style profile
-  app.post('/:id/rewrite', {
-    preHandler: authenticateUser,
-  }, async (request: FastifyRequest<{
-    Params: { id: string };
-    Body: {
-      styleProfileId: string;
-      skipCache?: boolean;
-      includeKeyPoints?: boolean;
-      includeSummary?: boolean;
-    };
-  }>, reply: FastifyReply) => {
-    if (!request.user) {
-      throw new Error('User not authenticated');
-    }
-
-    const { id: articleId } = request.params;
-    const { styleProfileId, skipCache, includeKeyPoints, includeSummary } = request.body;
-
-    if (!styleProfileId) {
-      throw new ValidationError('styleProfileId is required');
-    }
-
-    try {
-      const rewrittenArticle = await rewritingService.rewriteArticle(
-        articleId,
-        request.user.userId,
-        styleProfileId,
-        {
-          skipCache,
-          includeKeyPoints,
-          includeSummary,
-          addSourceCitation: true,
-        }
-      );
-
-      reply.send({ rewrittenArticle });
-    } catch (error) {
-      if (error instanceof AIProviderError) {
-        reply.status(503).send({
-          error: {
-            code: 'AI_PROVIDER_ERROR',
-            message: error.message,
+        return {
+          success: true,
+          data: {
+            articles: result.articles,
+            pagination: {
+              total: result.total,
+              limit: query.limit,
+              offset: query.offset,
+              hasMore: query.offset + query.limit < result.total,
+            },
           },
-        });
-      } else {
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid query parameters', { errors: error.errors });
+        }
         throw error;
       }
     }
-  });
+  );
 
-  // Get rewritten article
-  app.get('/:id/rewritten/:styleProfileId', {
-    preHandler: authenticateUser,
-  }, async (request: FastifyRequest<{
-    Params: { id: string; styleProfileId: string };
-  }>, reply: FastifyReply) => {
-    if (!request.user) {
-      throw new Error('User not authenticated');
+  /**
+   * GET /articles/:id
+   * Get a single article by ID
+   */
+  app.get(
+    '/:id',
+    async (request: FastifyRequest<{ Params: z.infer<typeof ArticleIdParamsSchema> }>) => {
+      try {
+        const params = ArticleIdParamsSchema.parse(request.params);
+        const article = await articleService.getArticleById(params.id);
+
+        return {
+          success: true,
+          data: article,
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid article ID', { errors: error.errors });
+        }
+        throw error;
+      }
     }
+  );
 
-    const { id: articleId, styleProfileId } = request.params;
+  /**
+   * POST /articles/:id/rewrite
+   * Rewrite an article using a specific style profile
+   * Requires authentication
+   */
+  app.post(
+    '/:id/rewrite',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Params: z.infer<typeof ArticleIdParamsSchema>;
+        Body: z.infer<typeof RewriteArticleBodySchema>;
+      }>
+    ) => {
+      try {
+        const params = ArticleIdParamsSchema.parse(request.params);
+        const body = RewriteArticleBodySchema.parse(request.body);
 
-    const rewrittenArticle = await rewritingService.getRewrittenArticle(
-      articleId,
-      request.user.userId,
-      styleProfileId
-    );
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
 
-    if (!rewrittenArticle) {
-      reply.status(404).send({ error: 'Rewritten article not found' });
-      return;
+        const rewrittenArticle = await rewritingService.rewriteArticle(
+          params.id,
+          request.user.userId,
+          body.styleProfileId,
+          {
+            skipCache: body.skipCache,
+            includeKeyPoints: body.includeKeyPoints,
+            includeSummary: body.includeSummary,
+            addSourceCitation: true,
+          }
+        );
+
+        return {
+          success: true,
+          data: rewrittenArticle,
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid request', { errors: error.errors });
+        }
+        if (error instanceof AIProviderError) {
+          throw error; // Will be handled by global error handler
+        }
+        throw error;
+      }
     }
+  );
 
-    reply.send({ rewrittenArticle });
-  });
+  /**
+   * GET /articles/:id/rewritten/:styleProfileId
+   * Get a rewritten article by article ID and style profile ID
+   * Requires authentication
+   */
+  app.get(
+    '/:id/rewritten/:styleProfileId',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Params: z.infer<typeof GetRewrittenArticleParamsSchema>;
+      }>
+    ) => {
+      try {
+        const params = GetRewrittenArticleParamsSchema.parse(request.params);
 
-  // Get all rewritten articles for user
-  app.get('/rewritten/my-articles', {
-    preHandler: authenticateUser,
-  }, async (request: FastifyRequest<{
-    Querystring: {
-      limit?: string;
-      offset?: string;
-    };
-  }>, reply: FastifyReply) => {
-    if (!request.user) {
-      throw new Error('User not authenticated');
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
+
+        const rewrittenArticle = await rewritingService.getRewrittenArticle(
+          params.id,
+          request.user.userId,
+          params.styleProfileId
+        );
+
+        if (!rewrittenArticle) {
+          return {
+            success: false,
+            error: {
+              code: 'NOT_FOUND',
+              message: 'Rewritten article not found',
+            },
+          };
+        }
+
+        return {
+          success: true,
+          data: rewrittenArticle,
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid parameters', { errors: error.errors });
+        }
+        throw error;
+      }
     }
+  );
 
-    const limit = parseInt(request.query.limit || '50', 10);
-    const offset = parseInt(request.query.offset || '0', 10);
+  /**
+   * GET /articles/rewritten/my-articles
+   * Get all rewritten articles for the authenticated user
+   * Requires authentication
+   */
+  app.get(
+    '/rewritten/my-articles',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Querystring: z.infer<typeof ListRewrittenArticlesQuerySchema>;
+      }>
+    ) => {
+      try {
+        const query = ListRewrittenArticlesQuerySchema.parse(request.query);
 
-    const rewrittenArticles = await rewritingService.getUserRewrittenArticles(
-      request.user.userId,
-      limit,
-      offset
-    );
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
 
-    reply.send({ rewrittenArticles, count: rewrittenArticles.length, limit, offset });
-  });
+        const rewrittenArticles = await rewritingService.getUserRewrittenArticles(
+          request.user.userId,
+          query.limit,
+          query.offset
+        );
 
-  // Delete rewritten article
-  app.delete('/rewritten/:id', {
-    preHandler: authenticateUser,
-  }, async (request: FastifyRequest<{
-    Params: { id: string };
-  }>, reply: FastifyReply) => {
-    if (!request.user) {
-      throw new Error('User not authenticated');
+        return {
+          success: true,
+          data: {
+            rewrittenArticles,
+            pagination: {
+              limit: query.limit,
+              offset: query.offset,
+              count: rewrittenArticles.length,
+            },
+          },
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid query parameters', { errors: error.errors });
+        }
+        throw error;
+      }
     }
+  );
 
-    const { id } = request.params;
+  /**
+   * DELETE /articles/rewritten/:id
+   * Delete a rewritten article
+   * Requires authentication
+   */
+  app.delete(
+    '/rewritten/:id',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request: FastifyRequest<{ Params: { id: string } }>) => {
+      try {
+        if (!request.user) {
+          throw new ValidationError('User not authenticated');
+        }
 
-    await rewritingService.deleteRewrittenArticle(id, request.user.userId);
+        await rewritingService.deleteRewrittenArticle(
+          request.params.id,
+          request.user.userId
+        );
 
-    reply.send({ message: 'Rewritten article deleted successfully' });
-  });
-
-  // Cache management endpoints (admin only - you may want to add admin middleware)
-
-  // Get cache stats
-  app.get('/cache/stats', {
-    preHandler: authenticateUser,
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const stats = await cacheService.getCacheStats();
-    reply.send({ stats });
-  });
-
-  // Clear user's cache
-  app.delete('/cache/my-cache', {
-    preHandler: authenticateUser,
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.user) {
-      throw new Error('User not authenticated');
+        return {
+          success: true,
+          message: 'Rewritten article deleted successfully',
+        };
+      } catch (error) {
+        throw error;
+      }
     }
+  );
 
-    await cacheService.invalidateUserCache(request.user.userId);
-    reply.send({ message: 'Cache cleared successfully' });
-  });
+  /**
+   * GET /articles/cache/stats
+   * Get cache statistics
+   * Requires authentication
+   */
+  app.get(
+    '/cache/stats',
+    {
+      preHandler: authenticateUser,
+    },
+    async () => {
+      const stats = await cacheService.getCacheStats();
+
+      return {
+        success: true,
+        data: stats,
+      };
+    }
+  );
+
+  /**
+   * DELETE /articles/cache/my-cache
+   * Clear the authenticated user's cache
+   * Requires authentication
+   */
+  app.delete(
+    '/cache/my-cache',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request: FastifyRequest) => {
+      if (!request.user) {
+        throw new ValidationError('User not authenticated');
+      }
+
+      await cacheService.invalidateUserCache(request.user.userId);
+
+      return {
+        success: true,
+        message: 'Cache cleared successfully',
+      };
+    }
+  );
 }
