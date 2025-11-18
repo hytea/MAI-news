@@ -13,6 +13,9 @@ import type {
   ApiResponse,
   ArticleCategory,
   ReadingHistory,
+  BiasAnalysis,
+  EnrichedContext,
+  KeyPointsData,
 } from '../types';
 
 class ApiClient {
@@ -161,6 +164,30 @@ class ApiClient {
 
   async deleteRewrittenArticle(id: string): Promise<void> {
     await this.client.delete(`/articles/rewritten/${id}`);
+  }
+
+  // AI Features
+  async analyzeBias(articleId: string): Promise<BiasAnalysis> {
+    const { data } = await this.client.post<BiasAnalysis>(
+      `/articles/${articleId}/analyze-bias`
+    );
+    return data;
+  }
+
+  async enrichContext(articleId: string, topic?: string): Promise<EnrichedContext> {
+    const { data } = await this.client.post<EnrichedContext>(
+      `/articles/${articleId}/enrich-context`,
+      { topic }
+    );
+    return data;
+  }
+
+  async getKeyPoints(articleId: string, count?: number): Promise<KeyPointsData> {
+    const { data } = await this.client.get<KeyPointsData>(
+      `/articles/${articleId}/key-points`,
+      { params: { count } }
+    );
+    return data;
   }
 
   // Style Profiles

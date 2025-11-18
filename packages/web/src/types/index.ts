@@ -167,3 +167,31 @@ export interface PaginatedResponse<T> {
     hasMore: boolean;
   };
 }
+
+// AI Feature Types
+export type BiasLevel = 'left' | 'center-left' | 'center' | 'center-right' | 'right' | 'unknown';
+export type SeverityLevel = 'low' | 'medium' | 'high';
+
+export interface BiasIndicator {
+  type: string;
+  description: string;
+  severity: SeverityLevel;
+}
+
+export interface BiasAnalysis {
+  overallBias: BiasLevel;
+  confidence: number; // 0-1
+  indicators: BiasIndicator[];
+  alternativePerspectives?: string[];
+}
+
+export interface EnrichedContext {
+  originalContent: string;
+  enrichedContent: string;
+  topic: string;
+}
+
+export interface KeyPointsData {
+  keyPoints: string[];
+  count: number;
+}
