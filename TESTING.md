@@ -233,6 +233,8 @@ npm run test:docker:clean
 
 ### Docker Compose Services
 
+**Note:** This project uses Docker Compose V2 (`docker compose` with a space) which is included in modern Docker installations. If you have the legacy `docker-compose` command, it should work as well.
+
 The `docker-compose.test.yml` file defines the following services:
 
 - **postgres-test**: PostgreSQL 16 test database (port 5433)

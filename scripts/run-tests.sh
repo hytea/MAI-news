@@ -118,7 +118,7 @@ fi
 # Clean Docker volumes if requested
 if [ "$DOCKER" = true ] && [ "$CLEAN" = true ]; then
     print_info "Cleaning Docker test volumes..."
-    docker-compose -f docker-compose.test.yml down -v 2>/dev/null || true
+    docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
     print_success "Docker volumes cleaned"
 fi
 
@@ -134,19 +134,19 @@ if [ "$DOCKER" = true ]; then
     case $TEST_SUITE in
         all)
             if [ "$COVERAGE" = true ]; then
-                docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit test-coverage
+                docker compose -f docker-compose.test.yml up --build --abort-on-container-exit test-coverage
             else
-                docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit test-all
+                docker compose -f docker-compose.test.yml up --build --abort-on-container-exit test-all
             fi
             ;;
         api)
-            docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit test-api
+            docker compose -f docker-compose.test.yml up --build --abort-on-container-exit test-api
             ;;
         web)
-            docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit test-web
+            docker compose -f docker-compose.test.yml up --build --abort-on-container-exit test-web
             ;;
         shared)
-            docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit test-shared
+            docker compose -f docker-compose.test.yml up --build --abort-on-container-exit test-shared
             ;;
     esac
 
@@ -155,7 +155,7 @@ if [ "$DOCKER" = true ]; then
 
     # Clean up containers
     print_info "Cleaning up Docker containers..."
-    docker-compose -f docker-compose.test.yml down
+    docker compose -f docker-compose.test.yml down
 
 else
     # Run tests locally
