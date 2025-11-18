@@ -9,6 +9,7 @@ import { articlesRoutes } from './routes/articles.routes';
 import { styleProfilesRoutes } from './routes/style-profiles.routes';
 import { userRoutes } from './routes/user.routes';
 import { sourcesRoutes } from './routes/sources.routes';
+import { notificationsRoutes } from './routes/notifications.routes';
 import { AppError } from '@news-curator/shared';
 
 // Extend Fastify instance with database pool
@@ -83,6 +84,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(styleProfilesRoutes, { prefix: '/api/style-profiles' });
   await app.register(userRoutes, { prefix: '/api/user' });
   await app.register(sourcesRoutes, { prefix: '/api' });
+  await app.register(notificationsRoutes, { prefix: '/api/notifications' });
 
   return app;
 }

@@ -4,10 +4,12 @@ import { closeRedis } from './config/redis';
 import { env } from './config/env';
 import { IngestionWorker } from './workers/ingestion.worker';
 import { SchedulerService } from './services/scheduler.service';
+import { NotificationSchedulerService } from './services/notification-scheduler.service';
 
 async function start() {
   let worker: IngestionWorker | null = null;
   let scheduler: SchedulerService | null = null;
+  let notificationScheduler: NotificationSchedulerService | null = null;
 
   try {
     // Initialize database connection
@@ -30,6 +32,11 @@ async function start() {
     scheduler.start();
     console.log('✅ News ingestion scheduler started');
 
+    // Start notification scheduler
+    notificationScheduler = new NotificationSchedulerService(db);
+    notificationScheduler.start();
+    console.log('✅ Notification scheduler started');
+
     // Build and start Fastify app
     const app = await buildApp();
 
@@ -46,9 +53,12 @@ async function start() {
       process.on(signal, async () => {
         console.log(`\n${signal} received, shutting down gracefully...`);
 
-        // Stop scheduler
+        // Stop schedulers
         if (scheduler) {
           scheduler.stop();
+        }
+        if (notificationScheduler) {
+          notificationScheduler.stop();
         }
 
         // Close worker
@@ -77,6 +87,9 @@ async function start() {
     }
     if (scheduler) {
       scheduler.stop();
+    }
+    if (notificationScheduler) {
+      notificationScheduler.stop();
     }
     await closeRedis();
     await closeDatabasePool();
