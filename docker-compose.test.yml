@@ -1,0 +1,177 @@
+version: '3.8'
+
+services:
+  # PostgreSQL test database
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: news-curator-postgres-test
+    environment:
+      POSTGRES_DB: news_curator_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Redis test instance
+  redis-test:
+    image: redis:7-alpine
+    container_name: news-curator-redis-test
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - test-network
+
+  # Run all tests
+  test-all:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+      target: test
+    container_name: news-curator-test-all
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=test
+      - DB_HOST=postgres-test
+      - DB_PORT=5432
+      - DB_NAME=news_curator_test
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - REDIS_HOST=redis-test
+      - REDIS_PORT=6379
+      - JWT_SECRET=test-jwt-secret-for-automated-testing
+      - JWT_REFRESH_SECRET=test-jwt-refresh-secret-for-automated-testing
+      - JWT_EXPIRES_IN=1h
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - AI_PROVIDER=openrouter
+      - AI_API_KEY=test-api-key
+      - AI_MODEL=anthropic/claude-3-haiku
+      - VITE_API_URL=http://localhost:3001
+    volumes:
+      - ./packages:/app/packages
+      - /app/node_modules
+      - /app/packages/api/node_modules
+      - /app/packages/web/node_modules
+      - /app/packages/shared/node_modules
+      - /app/packages/ai-providers/node_modules
+    networks:
+      - test-network
+
+  # Run tests with coverage
+  test-coverage:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+      target: coverage
+    container_name: news-curator-test-coverage
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=test
+      - DB_HOST=postgres-test
+      - DB_PORT=5432
+      - DB_NAME=news_curator_test
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - REDIS_HOST=redis-test
+      - REDIS_PORT=6379
+      - JWT_SECRET=test-jwt-secret-for-automated-testing
+      - JWT_REFRESH_SECRET=test-jwt-refresh-secret-for-automated-testing
+      - AI_PROVIDER=openrouter
+      - AI_API_KEY=test-api-key
+      - AI_MODEL=anthropic/claude-3-haiku
+      - VITE_API_URL=http://localhost:3001
+    volumes:
+      - ./packages:/app/packages
+      - ./coverage:/app/coverage
+      - /app/node_modules
+      - /app/packages/api/node_modules
+      - /app/packages/web/node_modules
+      - /app/packages/shared/node_modules
+      - /app/packages/ai-providers/node_modules
+    networks:
+      - test-network
+
+  # Run only API tests
+  test-api:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+      target: test-api
+    container_name: news-curator-test-api
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=test
+      - DB_HOST=postgres-test
+      - DB_PORT=5432
+      - DB_NAME=news_curator_test
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - REDIS_HOST=redis-test
+      - REDIS_PORT=6379
+      - JWT_SECRET=test-jwt-secret
+      - JWT_REFRESH_SECRET=test-jwt-refresh-secret
+      - AI_PROVIDER=openrouter
+      - AI_API_KEY=test-api-key
+    volumes:
+      - ./packages/api:/app/packages/api
+      - /app/packages/api/node_modules
+    networks:
+      - test-network
+
+  # Run only Web tests
+  test-web:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+      target: test-web
+    container_name: news-curator-test-web
+    environment:
+      - NODE_ENV=test
+      - VITE_API_URL=http://localhost:3001
+    volumes:
+      - ./packages/web:/app/packages/web
+      - /app/packages/web/node_modules
+    networks:
+      - test-network
+
+  # Run only Shared package tests
+  test-shared:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+      target: test-shared
+    container_name: news-curator-test-shared
+    environment:
+      - NODE_ENV=test
+    volumes:
+      - ./packages/shared:/app/packages/shared
+      - /app/packages/shared/node_modules
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
