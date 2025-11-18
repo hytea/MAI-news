@@ -9,6 +9,8 @@ import { NewsFeed } from './pages/NewsFeed';
 import { ArticleReader } from './pages/ArticleReader';
 import { Settings } from './pages/Settings';
 import { ReadingHistory } from './pages/ReadingHistory';
+import { NotificationHub } from './pages/NotificationHub';
+import { NotificationSettings } from './pages/NotificationSettings';
 
 const App: React.FC = () => {
   return (
@@ -57,6 +59,28 @@ const App: React.FC = () => {
               <ProtectedRoute>
                 <Layout>
                   <ReadingHistory />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/notifications"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <NotificationHub />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/settings/notifications"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <NotificationSettings />
                 </Layout>
               </ProtectedRoute>
             }
