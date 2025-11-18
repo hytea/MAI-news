@@ -1,26 +1,24 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { authenticateUser, optionalAuth } from '../auth.middleware';
-import { JWTService } from '../../services/jwt.service';
+import { TokenPayload } from '../../services/jwt.service';
 import { AuthenticationError } from '@news-curator/shared';
 
-// Mock JWTService
+// Mock the entire middleware module to control JWTService instance
+const mockVerifyAccessToken = jest.fn();
+
 jest.mock('../../services/jwt.service', () => {
   return {
     JWTService: jest.fn().mockImplementation(() => ({
-      verifyAccessToken: jest.fn(),
-      verifyRefreshToken: jest.fn(),
-      generateAccessToken: jest.fn(),
-      generateRefreshToken: jest.fn(),
-      generateTokenPair: jest.fn(),
-      decodeToken: jest.fn(),
+      verifyAccessToken: mockVerifyAccessToken,
     })),
   };
 });
 
+// Import after mocking
+import { authenticateUser, optionalAuth } from '../auth.middleware';
+
 describe('Auth Middleware', () => {
   let mockRequest: Partial<FastifyRequest>;
   let mockReply: Partial<FastifyReply>;
-  let mockJWTService: jest.Mocked<JWTService>;
 
   beforeEach(() => {
     mockRequest = {
@@ -33,13 +31,12 @@ describe('Auth Middleware', () => {
       send: jest.fn().mockReturnThis(),
     };
 
-    mockJWTService = new JWTService() as jest.Mocked<JWTService>;
     jest.clearAllMocks();
   });
 
   describe('authenticateUser', () => {
     it('should authenticate valid token', async () => {
-      const mockPayload = {
+      const mockPayload: TokenPayload = {
         userId: 'user-123',
         email: 'test@example.com',
       };
@@ -48,7 +45,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer valid-token',
       };
 
-      mockJWTService.verifyAccessToken = jest.fn().mockReturnValue(mockPayload);
+      mockVerifyAccessToken.mockReturnValue(mockPayload);
 
       await authenticateUser(
         mockRequest as FastifyRequest,
@@ -56,6 +53,7 @@ describe('Auth Middleware', () => {
       );
 
       expect(mockRequest.user).toEqual(mockPayload);
+      expect(mockVerifyAccessToken).toHaveBeenCalledWith('valid-token');
       expect(mockReply.status).not.toHaveBeenCalled();
       expect(mockReply.send).not.toHaveBeenCalled();
     });
@@ -101,6 +99,10 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer ',
       };
 
+      mockVerifyAccessToken.mockImplementation(() => {
+        throw new AuthenticationError('Invalid token');
+      });
+
       await authenticateUser(
         mockRequest as FastifyRequest,
         mockReply as FastifyReply
@@ -110,7 +112,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should extract token correctly from Bearer header', async () => {
-      const mockPayload = {
+      const mockPayload: TokenPayload = {
         userId: 'user-123',
         email: 'test@example.com',
       };
@@ -119,13 +121,14 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer my.jwt.token',
       };
 
-      mockJWTService.verifyAccessToken = jest.fn().mockReturnValue(mockPayload);
+      mockVerifyAccessToken.mockReturnValue(mockPayload);
 
       await authenticateUser(
         mockRequest as FastifyRequest,
         mockReply as FastifyReply
       );
 
+      expect(mockVerifyAccessToken).toHaveBeenCalledWith('my.jwt.token');
       expect(mockRequest.user).toEqual(mockPayload);
     });
 
@@ -134,8 +137,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer invalid-token',
       };
 
-      const AuthenticationError = require('@news-curator/shared').AuthenticationError;
-      mockJWTService.verifyAccessToken = jest.fn().mockImplementation(() => {
+      mockVerifyAccessToken.mockImplementation(() => {
         throw new AuthenticationError('Invalid token');
       });
 
@@ -158,8 +160,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer expired-token',
       };
 
-      const AuthenticationError = require('@news-curator/shared').AuthenticationError;
-      mockJWTService.verifyAccessToken = jest.fn().mockImplementation(() => {
+      mockVerifyAccessToken.mockImplementation(() => {
         throw new AuthenticationError('Invalid or expired access token');
       });
 
@@ -182,7 +183,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer some-token',
       };
 
-      mockJWTService.verifyAccessToken = jest.fn().mockImplementation(() => {
+      mockVerifyAccessToken.mockImplementation(() => {
         throw new Error('Unexpected error');
       });
 
@@ -203,7 +204,7 @@ describe('Auth Middleware', () => {
 
   describe('optionalAuth', () => {
     it('should set user if valid token provided', () => {
-      const mockPayload = {
+      const mockPayload: TokenPayload = {
         userId: 'user-123',
         email: 'test@example.com',
       };
@@ -212,7 +213,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer valid-token',
       };
 
-      mockJWTService.verifyAccessToken = jest.fn().mockReturnValue(mockPayload);
+      mockVerifyAccessToken.mockReturnValue(mockPayload);
 
       optionalAuth(
         mockRequest as FastifyRequest,
@@ -242,8 +243,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer invalid-token',
       };
 
-      const AuthenticationError = require('@news-curator/shared').AuthenticationError;
-      mockJWTService.verifyAccessToken = jest.fn().mockImplementation(() => {
+      mockVerifyAccessToken.mockImplementation(() => {
         throw new AuthenticationError('Invalid token');
       });
 
@@ -276,7 +276,7 @@ describe('Auth Middleware', () => {
         authorization: 'Bearer some-token',
       };
 
-      mockJWTService.verifyAccessToken = jest.fn().mockImplementation(() => {
+      mockVerifyAccessToken.mockImplementation(() => {
         throw new Error('Unexpected error');
       });
 

@@ -31,6 +31,15 @@ describe('ArticleCacheService', () => {
       imageUrl: 'https://example.com/image.jpg',
       createdAt: new Date('2024-01-01'),
       updatedAt: new Date('2024-01-01'),
+      source: {
+        id: 'source-123',
+        name: 'Test Source',
+        url: 'https://example.com',
+        isActive: true,
+        reliabilityScore: 85,
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      },
     },
     citations: [
       {
@@ -127,7 +136,9 @@ describe('ArticleCacheService', () => {
         'style-123'
       );
 
-      expect(result).toEqual(mockRewrittenArticle);
+      // When JSON.parse is called, dates become strings
+      const expected = { ...mockRewrittenArticle, createdAt: mockRewrittenArticle.createdAt.toISOString() };
+      expect(result).toEqual(expected);
       expect(mockRedis.get).toHaveBeenCalledWith(
         'rewritten_article:article-123:user-123:style-123'
       );
