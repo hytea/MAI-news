@@ -43,6 +43,10 @@ const ListRewrittenArticlesQuerySchema = z.object({
   offset: z.coerce.number().min(0).default(0),
 });
 
+const EnrichContextBodySchema = z.object({
+  topic: z.string().optional(),
+});
+
 export async function articlesRoutes(app: FastifyInstance): Promise<void> {
   const articleService = new ArticleService(app.db);
 
@@ -357,6 +361,134 @@ export async function articlesRoutes(app: FastifyInstance): Promise<void> {
         success: true,
         message: 'Cache cleared successfully',
       };
+    }
+  );
+
+  /**
+   * POST /articles/:id/analyze-bias
+   * Analyze bias in an article
+   * Requires authentication
+   */
+  app.post(
+    '/:id/analyze-bias',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Params: z.infer<typeof ArticleIdParamsSchema>;
+      }>
+    ) => {
+      try {
+        const params = ArticleIdParamsSchema.parse(request.params);
+        const article = await articleService.getArticleById(params.id);
+
+        // Analyze bias using AI provider
+        const biasAnalysis = await aiProvider.detectBias(article.content);
+
+        return {
+          success: true,
+          data: biasAnalysis,
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid article ID', { errors: error.errors });
+        }
+        if (error instanceof AIProviderError) {
+          throw error;
+        }
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * POST /articles/:id/enrich-context
+   * Enrich an article with additional context
+   * Requires authentication
+   */
+  app.post(
+    '/:id/enrich-context',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Params: z.infer<typeof ArticleIdParamsSchema>;
+        Body: z.infer<typeof EnrichContextBodySchema>;
+      }>
+    ) => {
+      try {
+        const params = ArticleIdParamsSchema.parse(request.params);
+        const body = EnrichContextBodySchema.parse(request.body);
+        const article = await articleService.getArticleById(params.id);
+
+        // Use article title as topic if not provided
+        const topic = body.topic || article.title;
+
+        // Enrich with context using AI provider
+        const enrichedContent = await aiProvider.enrichWithContext(article.content, topic);
+
+        return {
+          success: true,
+          data: {
+            originalContent: article.content,
+            enrichedContent,
+            topic,
+          },
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid request', { errors: error.errors });
+        }
+        if (error instanceof AIProviderError) {
+          throw error;
+        }
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * GET /articles/:id/key-points
+   * Extract key points from an article
+   * Requires authentication
+   */
+  app.get(
+    '/:id/key-points',
+    {
+      preHandler: authenticateUser,
+    },
+    async (
+      request: FastifyRequest<{
+        Params: z.infer<typeof ArticleIdParamsSchema>;
+        Querystring: { count?: number };
+      }>
+    ) => {
+      try {
+        const params = ArticleIdParamsSchema.parse(request.params);
+        const count = request.query.count || 5;
+        const article = await articleService.getArticleById(params.id);
+
+        // Extract key points using AI provider
+        const keyPoints = await aiProvider.extractKeyPoints(article.content, count);
+
+        return {
+          success: true,
+          data: {
+            keyPoints,
+            count: keyPoints.length,
+          },
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          throw new ValidationError('Invalid article ID', { errors: error.errors });
+        }
+        if (error instanceof AIProviderError) {
+          throw error;
+        }
+        throw error;
+      }
     }
   );
 }
